@@ -1,6 +1,6 @@
 from .retriever import get_user_retriever
 
-def run_rag(query: str, user_id: str, llm):
+def run_rag(query: str, user_id: str):
 
     retriever = get_user_retriever(user_id)
     docs = retriever.invoke(query)
