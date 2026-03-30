@@ -1,6 +1,6 @@
-from .calculator import CalculatorTool
-from .financial_metrics import FinancialMetricsTool
-from .document_search import DocumentSearchTool
+from .calculator import CalculatorTool, CalculatorInput
+from .financial_metrics import FinancialMetricsTool, FinancialInput
+from .document_search import DocumentSearchTool, DocumentSearchInput
 from ..rag.retriever import get_user_retriever
 
 
@@ -8,9 +8,18 @@ class ToolRegistry:
 
     def __init__(self, retriever):
         self.tools = {
-            "document_search": DocumentSearchTool(retriever),
-            "calculator": CalculatorTool(),
-            "financial_metrics": FinancialMetricsTool(),
+            "document_search": {
+                "tool": DocumentSearchTool(retriever),
+                "input_model": DocumentSearchInput
+            },
+            "calculator": {
+                "tool": CalculatorTool(),
+                "input_model": CalculatorInput
+            },
+            "financial_metrics": {
+                "tool": FinancialMetricsTool(),
+                "input_model": FinancialInput
+            },
         }
 
     @classmethod

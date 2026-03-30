@@ -8,6 +8,9 @@ from ...prompts.system import SYSTEM_PROMPT
 from ...prompts.agent_prompt import agent_prompt
 from app.utils.agent_util import parse_agent_output
 from ...tools.tool_registry import ToolRegistry
+from app.core.logging import get_logger
+
+logger = get_logger("access")
 
 
 class Chatbot_agent:
@@ -63,18 +66,47 @@ class Chatbot_agent:
 
         MAX_STEPS = 3  # prevent infinite loops
 
+        last_tool = None
+        last_tool_input = None
+        last_tool_result = None
+
         for step in range(MAX_STEPS):
+            logger.info(f"--- STEP {step} START ---")
 
             # STEP 1: Agent Decision
             decision_chain = agent_prompt | self.llm
+            logger.info(f"messages: ", messages)
+            # break
+            decision = await decision_chain.ainvoke(
+                {"input": f"{user_message}\n\nThink step by step. Do you need to use a tool?", "history": messages}
+            )
 
-            decision = await decision_chain.ainvoke({"input": user_message, "history": messages})
+            logger.info(f"Decision: {decision.content}")
 
             parsed = parse_agent_output(decision.content)
+
+            logger.info(f"Parsed: {parsed}")
+
             tool_name = parsed.get("tool")
             tool_input = parsed.get("input", "")
 
-            print(f"[STEP {step}] Tool:", tool_name)
+            logger.info(f"Tool Name: {tool_name}")
+            logger.info(f"Tool Input: {tool_input}")
+
+            # Termination condition incase agent stuck in loop
+            if tool_name == last_tool and tool_input == last_tool_input:
+                yield f"Final Answer: {last_tool_result}"
+                return
+
+            last_tool = tool_name
+            last_tool_input = tool_input
+
+            logger.info("Tool Input:", tool_input)
+
+            if tool_name == "document_search":
+                tool_input["user_id"] = user_id
+
+            print(f"[STEP {step}] Tool Name:{tool_name}, Tool Input: {tool_input}")
 
             # FINAL ANSWER (no tool)
             if not tool_name or tool_name == "none":
@@ -89,17 +121,87 @@ class Chatbot_agent:
                 return
 
             # TOOL EXECUTION
-            tool = registry.get_tool(tool_name)
+            tool_entry = registry.get_tool(tool_name)
 
-            if not tool:
-                error_msg = f"Tool {tool_name} not found"
-                yield error_msg
+            if not tool_entry:
+                yield f"Tool {tool_name} not found"
                 return
 
-            tool_result = tool.run(tool_input)
+            tool = tool_entry["tool"]
+            input_model = tool_entry["input_model"]
+
+            # error handling if tool execution fails
+            try:
+                if not isinstance(tool_input, dict):
+                    messages.append(
+                        HumanMessage(
+                            content=f"""
+                                Invalid input format for tool {tool_name}.
+
+                                Expected JSON object but got:
+                                {tool_input}
+
+                                Fix and retry.
+                            """
+                        )
+                    )
+                    continue
+
+                structured_input = input_model(**tool_input)
+                tool_output = tool.run(structured_input)
+
+                tool_result = tool_output.result
+
+                last_tool_result = tool_result
+
+                logger.info(f"Tool Result: {tool_result}")
+
+            except Exception as e:
+                tool_result = f"ERROR: {str(e)}"
+
+                messages.append(
+                    HumanMessage(
+                        content=f"""
+                            Tool {tool_name} failed.
+
+                            Error:
+                            {str(e)}
+
+                            Fix your input and try again.
+                        """
+                    )
+                )
+
+                continue
 
             # CRITICAL: Feed tool result back into conversation
-            messages.append(HumanMessage(content=f"Tool [{tool_name}] result:\n{tool_result}"))
+            messages.append(
+                HumanMessage(
+                    content=f"""
+            You used tool: {tool_name}
+
+            Tool result:
+            {tool_result}
+
+            Now perform the following steps:
+
+            1. Extract all relevant numerical values
+            2. Convert them into structured JSON format like:
+            {{
+                "current": number,
+                "previous": number
+            }}
+
+            3. Decide:
+            - If calculation is needed → call financial_metrics
+            - Otherwise → return final answer
+
+            IMPORTANT:
+            - Do NOT pass raw text to tools
+            - ONLY pass structured numerical values
+            """
+                )
+            )
 
         # fallback if loop ends
         yield "Sorry, I couldn't complete the request."

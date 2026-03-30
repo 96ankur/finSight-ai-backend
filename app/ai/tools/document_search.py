@@ -13,15 +13,9 @@ class DocumentSearchTool(BaseTool):
     def __init__(self, retriever):
         self.retriever = retriever
 
-    def run(self, input: DocumentSearchInput) -> ToolOutput:
-        docs = self.retriever.get_relevant_documents(
-            query=input.query,
-            user_id=input.user_id
-        )
+    def run(self, query: str) -> ToolOutput:
+        docs = self.retriever.invoke(query)
 
         content = "\n".join([doc.page_content for doc in docs])
 
-        return ToolOutput(
-            result=content,
-            metadata={"num_docs": len(docs)}
-        )
+        return ToolOutput(result=content, metadata={"num_docs": len(docs)})

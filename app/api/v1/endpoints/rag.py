@@ -27,7 +27,7 @@ async def rag_upload_file(fileData: Annotated[RagFileUpload, Depends()]):
             while content := await fileData.file.read(1024 * 1024):  # Read in 1MB chunks
                 await out_file.write(content)
 
-        result = ingest_pdf(file_location, fileData.user_id)
+        ingest_pdf(file_location, fileData.user_id)
     except Exception as e:
         return {"message": f"There was an error uploading the file: {e}"}
     finally:
