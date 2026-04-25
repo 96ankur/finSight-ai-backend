@@ -6,9 +6,6 @@ router = APIRouter(prefix="/chat", tags=["Chat"])
 
 @router.post("/stream")
 async def chat(message: ChatSchema.ChatRequest):
-    event_generator = await chat_service.stream_chat(message)
+    response = await chat_service.start_chat(message)
 
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream"
-    )
+    return response
