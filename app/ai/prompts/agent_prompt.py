@@ -78,7 +78,21 @@ Instructions:
 - Do NOT stop after retrieving data if calculation is required
 - Always check: “Do I need another tool?”
 
-Return ONLY valid JSON.
+STRICT OUTPUT FORMAT:
+
+You MUST return valid JSON:
+
+{
+  "thought": "...",
+  "tool": "tool_name OR null",
+  "input": {},
+  "answer": "..."
+}
+
+Rules:
+- If tool is used → answer must be null
+- If no tool → tool = "none" and provide answer
+- No extra text outside JSON
 """,
         ),
         MessagesPlaceholder(variable_name="history"),

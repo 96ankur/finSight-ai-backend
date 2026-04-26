@@ -4,11 +4,13 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.messages import HumanMessage
-from ...prompts.system import SYSTEM_PROMPT
-from ...prompts.agent_prompt import agent_prompt
-from app.utils.agent_util import parse_agent_output
-from ...tools.tool_registry import ToolRegistry
+from ..prompts.system import SYSTEM_PROMPT
+from ..prompts.agent_prompt import agent_prompt
+from app.utils.agent_output_parser import parse_agent_output
+from ..tools.tool_registry import ToolRegistry
 from app.core.logging import get_logger
+from .tool_executor import ToolExecutor
+from ...utils.agent_retry import get_valid_decision
 
 logger = get_logger("access")
 
@@ -27,7 +29,6 @@ class Chatbot_agent:
         )
 
         self.memory_store = {}
-
         self.chain = self.prompt | self.llm
 
     # What is the need for a memory store? Can't we get the history every time from ConversationBufferMemory?
@@ -63,98 +64,58 @@ class Chatbot_agent:
         messages = memory.messages.copy()
 
         registry = ToolRegistry.for_user(user_id)
+        tool_executor = ToolExecutor(registry)
 
         MAX_STEPS = 3  # prevent infinite loops
-
-        last_tool = None
-        last_tool_input = None
-        last_tool_result = None
+        trajectory = []
 
         for step in range(MAX_STEPS):
             logger.info(f"--- STEP {step} START ---")
 
             # STEP 1: Agent Decision
             decision_chain = agent_prompt | self.llm
-            logger.info(f"messages: ", messages)
-            # break
-            decision = await decision_chain.ainvoke(
-                {"input": f"{user_message}\n\nThink step by step. Do you need to use a tool?", "history": messages}
+            decision = await get_valid_decision(
+                decision_chain,
+                {
+                    "input": f"{user_message}\n\nThink step by step. Do you need to use a tool?",
+                    "history": messages,
+                },
+                parse_agent_output,
             )
 
-            logger.info(f"Decision: {decision.content}")
+            tool_name = decision.tool
+            tool_input = decision.input or {}
 
-            parsed = parse_agent_output(decision.content)
+            logger.info(f"Decision: {decision}")
 
-            logger.info(f"Parsed: {parsed}")
+            # Loop protection
+            if (tool_name, str(tool_input)) in trajectory:
+                return "Loop detected. Stopping execution."
 
-            tool_name = parsed.get("tool")
-            tool_input = parsed.get("input", "")
-
-            logger.info(f"Tool Name: {tool_name}")
-            logger.info(f"Tool Input: {tool_input}")
-
-            # Termination condition incase agent stuck in loop
-            if tool_name == last_tool and tool_input == last_tool_input:
-                yield f"Final Answer: {last_tool_result}"
-                return
-
-            last_tool = tool_name
-            last_tool_input = tool_input
-
-            logger.info("Tool Input:", tool_input)
-
-            if tool_name == "document_search":
-                tool_input["user_id"] = user_id
+            trajectory.append((tool_name, str(tool_input)))
 
             print(f"[STEP {step}] Tool Name:{tool_name}, Tool Input: {tool_input}")
 
             # FINAL ANSWER (no tool)
             if not tool_name or tool_name == "none":
-                final_answer = parsed.get("answer", decision.content)
-
-                # stream final answer
-                for char in final_answer:
-                    yield char
+                final_answer = decision.answer or "No answer generated."
 
                 memory.add_user_message(user_message)
                 memory.add_ai_message(final_answer)
+
+                for char in final_answer:
+                    yield char
                 return
 
             # TOOL EXECUTION
-            tool_entry = registry.get_tool(tool_name)
-
-            if not tool_entry:
-                yield f"Tool {tool_name} not found"
-                return
-
-            tool = tool_entry["tool"]
-            input_model = tool_entry["input_model"]
 
             # error handling if tool execution fails
             try:
-                if not isinstance(tool_input, dict):
-                    messages.append(
-                        HumanMessage(
-                            content=f"""
-                                Invalid input format for tool {tool_name}.
+                if tool_name == "document_search":
+                    tool_input["user_id"] = user_id
+                
+                tool_result = tool_executor.execute(tool_name, tool_input)
 
-                                Expected JSON object but got:
-                                {tool_input}
-
-                                Fix and retry.
-                            """
-                        )
-                    )
-                    continue
-
-                structured_input = input_model(**tool_input)
-                tool_output = tool.run(structured_input)
-
-                tool_result = tool_output.result
-
-                last_tool_result = tool_result
-
-                logger.info(f"Tool Result: {tool_result}")
 
             except Exception as e:
                 tool_result = f"ERROR: {str(e)}"
@@ -174,6 +135,7 @@ class Chatbot_agent:
 
                 continue
 
+            logger.info(f"Tool Result: {tool_result}")
             # CRITICAL: Feed tool result back into conversation
             messages.append(
                 HumanMessage(

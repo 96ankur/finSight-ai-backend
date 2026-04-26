@@ -17,7 +17,7 @@
     
 
 # from app.ai.agents.chat_bot.single_agent_chatbot import SingleAgentLangChainChatbot
-from app.ai.agents.chat_bot.chatbot_agent import Chatbot_agent
+from app.ai.agents.chatbot_agent import Chatbot_agent
 
 from app.schemas import chat as ChatSchema
 

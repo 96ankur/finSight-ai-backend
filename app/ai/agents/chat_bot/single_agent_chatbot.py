@@ -4,11 +4,31 @@ from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_core.messages import HumanMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from ...prompts.system import SYSTEM_PROMPT
-from ...prompts.decision_prompt import decision_prompt
-
 from ...rag.retriever import get_user_retriever
+
+
+decision_prompt = ChatPromptTemplate.from_messages([
+    ("system", """
+You are an intelligent financial assistant.
+
+Your job is to decide whether a user's query requires retrieving information
+from uploaded documents.
+
+Respond ONLY with one word:
+- RAG → if document lookup is needed
+- CHAT → if general knowledge is enough
+
+Rules:
+- Use RAG for: reports, filings, uploaded documents
+- Use CHAT for: general finance knowledge
+"""),
+
+    MessagesPlaceholder(variable_name="history"),
+
+    ("human", "{input}")
+])
 
 
 class SingleAgentLangChainChatbot:
