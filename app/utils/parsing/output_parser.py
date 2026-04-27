@@ -1,7 +1,7 @@
 import json
 from pydantic import ValidationError
 from app.core.logging import get_logger
-from ..models.AgentDecision import AgentDecision
+from ...schemas.AgentDecision import AgentDecision
 
 logger = get_logger("access")
 

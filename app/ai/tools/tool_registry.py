@@ -32,3 +32,6 @@ class ToolRegistry:
 
     def list_tools(self):
         return self.tools
+    
+    def get_tool_descriptions():
+        return 
