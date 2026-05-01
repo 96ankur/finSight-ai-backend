@@ -1,11 +1,14 @@
-from app.ai.memory.vector_memory import VectorMemory
-from app.ai.memory.summary_memory import SummaryMemory
+from ..memory.vector_memory import VectorMemory
+from ..memory.summary_memory import SummaryMemory
+from ..rag.pipeline import MultiQueryRAG
+
 
 
 class MemoryManager:
-    def __init__(self, llm):
+    def __init__(self, llm, user_id):
         self.vector_memory = VectorMemory()
         self.summary_memory = SummaryMemory(llm)
+        self.rag_pipeline = MultiQueryRAG(user_id)
 
     # Build context before LLM call
     async def build_context(self, user_id: str, query: str):
@@ -16,6 +19,9 @@ class MemoryManager:
         )
 
         summaries = self.summary_memory.get(user_id)
+        rag_docs = self.rag_pipeline.run(query)
+
+        rag_context = "\n".join([doc.page_content for doc in rag_docs])
 
         return f"""
             Relevant Facts:
@@ -23,6 +29,9 @@ class MemoryManager:
 
             Session Summary:
             {summaries["session_summary"]}
+
+            Retrieved Knowledge:
+            {rag_context}
         """
             # User Summary:
             # {summaries["user_summary"]}
@@ -46,7 +55,7 @@ class MemoryManager:
         conversation = f"User: {user_query}\nAssistant: {final_answer}"
         await self.summary_memory.update(user_id, conversation)
 
-    # 🔹 Cleanup session
+    # Cleanup session
     def clear_session(self, session_id: str):
         self.vector_memory.clear_session(session_id)
         self.summary_memory.clear_session(session_id)

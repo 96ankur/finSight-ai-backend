@@ -1,4 +1,5 @@
 import os
+from typing import List, Optional, Dict, Any
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 
@@ -31,3 +32,22 @@ class VectorStoreManager:
     def get_retriever(self, k=5):
         db = self.load_or_create()
         return db.as_retriever(search_kwargs={"k": k})
+    
+    def similarity_search(
+        self,
+        query: str,
+        k: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List:
+        """
+        Perform semantic similarity search with optional metadata filtering
+        """
+        try:
+            db = self.load_or_create()
+            if filters:
+                return db.similarity_search(query, k=k, filter=filters)
+            return db.similarity_search(query, k=k)
+
+        except Exception as e:
+            print(f"[VectorStore] similarity_search error: {e}")
+            return []

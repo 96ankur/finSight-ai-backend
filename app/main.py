@@ -12,6 +12,9 @@ from app.exceptions.base import AppException
 from app.middleware.correlation_id import CorrelationIdMiddleware
 from app.middleware.logging import RequestLoggingMiddleware
 
+from .ai.tools.tool_registry import ToolRegistry, Tool
+from .ai.tools.financial_metrics import FinancialMetricsTool
+from .ai.tools.calculator import CalculatorTool
 
 def create_app() -> FastAPI:
     application = FastAPI(
@@ -26,6 +29,7 @@ def create_app() -> FastAPI:
     _setup_middleware(application)
     _setup_exception_handlers(application)
     _setup_routes(application)
+    _register_tools()
 
     return application
 
@@ -62,6 +66,27 @@ def _setup_exception_handlers(application: FastAPI) -> None:
 
 def _setup_routes(application: FastAPI) -> None:
     application.include_router(api_router)
+
+def _register_tools():
+    registry = ToolRegistry()
+
+    registry.register(Tool(
+        name="financial",
+        description="Fetch financial metrics like revenue, profit, EPS",
+        func=FinancialMetricsTool().run
+    ))
+
+    registry.register(Tool(
+        name="calculator",
+        description="Perform numerical calculations",
+        func=CalculatorTool().run
+    ))
+
+    # registry.register(Tool(
+    #     name="web_search",
+    #     description="Search latest information from web",
+    #     func=web_search_function
+    # ))
 
 
 app = create_app()

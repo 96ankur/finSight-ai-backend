@@ -5,14 +5,14 @@ from ..memory.memory_manager import MemoryManager
 
 
 class Orchestrator:
-    def __init__(self, llm):
+    def __init__(self, llm, user_id):
         self.llm = llm
         self.planner = PlannerAgent(llm)
-        self.memory = MemoryManager(llm)
+        self.memory = MemoryManager(llm, user_id)
 
     async def run(self, query: str, user_id: str):
 
-        registry = ToolRegistry.for_user(user_id)
+        registry = ToolRegistry()
         executor = ExecutorAgent(self.llm, registry)
 
         tools_description = registry.get_tool_descriptions()
@@ -48,10 +48,25 @@ class Orchestrator:
             user_id,
             query,
             final_answer
-)
+            )
+        
+        verification = self.verifier.verify(
+            query,
+            results.execution,
+            results.context
+        )
+
+        if not verification["valid"]:
+            print("[Verification Failed]", verification)
+
+            return {
+                "answer": results.exection,
+                "warning": "Low confidence response",
+                "verification": verification
+            }
 
         # 3. FINAL ANSWER (simple for now)
         return {
             "plan": plan.model_dump(),
-            "execution": results
+            "execution": results.exection
         }

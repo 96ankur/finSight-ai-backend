@@ -4,3 +4,5 @@ __pycache__/
 .env
 rag_files/
 vectorstore/
+
+roadmap.txt

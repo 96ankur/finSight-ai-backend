@@ -17,13 +17,15 @@
     
 
 # from app.ai.agents.chat_bot.single_agent_chatbot import SingleAgentLangChainChatbot
-from app.ai.agents.chatbot_agent import Chatbot_agent
+from app.ai.agents.orchestrator_agent import Orchestrator
+from app.core.config import get_llm
 
 from app.schemas import chat as ChatSchema
 
 async def stream_chat(message: ChatSchema.ChatRequest):
     # client = SingleAgentLangChainChatbot(message.api_key, message.model)
-    client = Chatbot_agent(message.api_key, message.model)
+    llm = get_llm(message.api_key, message.model)
+    client = Orchestrator(llm, message.user_id)
 
 
     async def event_generator():

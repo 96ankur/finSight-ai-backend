@@ -3,6 +3,7 @@ from ..prompts.react_prompt import react_prompt
 from ...utils.parsing.output_parser import parse_agent_output
 from ...utils.retry import retry_with_correction
 from ...schemas.planner_schema import Plan
+from ..tools.tool_ranker import ToolRanker
 
 class ExecutorAgent:
     def __init__(self, llm, registry):
@@ -10,6 +11,7 @@ class ExecutorAgent:
         self.registry = registry
         self.tool_executor = ToolExecutor(registry)
         self.react_chain = react_prompt | llm
+        self.tool_ranker = ToolRanker(llm, registry)
 
     async def execute(self, plan: Plan, user_id: str):
 
@@ -20,95 +22,104 @@ class ExecutorAgent:
 
         for step_index, step in enumerate(plan.steps):
 
-            tool_name = step.action
+            original_tool = step.action
             tool_input = step.input or {}
 
-            retry_count = 0
+            # Tool Ranking Layer
+            ranked_tools = self.tool_ranker.rank_tools(
+                step.description if hasattr(step, "description") else str(step),
+                context_memory
+            )
 
-            while retry_count <= MAX_RETRY_PER_STEP:
+            # Ensure original tool is included
+            tool_candidates = [original_tool]
 
-                # Controlled reasoning (STRICT to current step)
-                decision = await retry_with_correction(
-                    self.react_chain,
-                    {
-                        "input": f"""
-                            You are executing a planned step.
+            for t in ranked_tools:
+                if t["tool"] not in tool_candidates:
+                    tool_candidates.append(t["tool"])
 
-                            STRICT INSTRUCTION:
-                            - You MUST use this tool: {tool_name}
-                            - You are NOT allowed to change the tool
-                            - You may ONLY adjust the input if needed
+            #  Decision Logic
+            success = False
 
-                            Current Step:
-                            Tool: {tool_name}
-                            Input: {tool_input}
+            for candidate_tool in tool_candidates:
 
-                            Previous Observations:
-                            {context_memory}
+                tool_name = candidate_tool
+                retry_count = 0
 
-                            If input is wrong → fix it
-                            If correct → proceed
+                while retry_count <= MAX_RETRY_PER_STEP:
 
-                            Return JSON.
-                        """,
-                        "tools": self.registry.get_tool_descriptions(),
-                    },
-                    parse_agent_output,
-                )
+                    print(f"\n[Tool Attempt] Trying: {tool_name}")
 
-                updated_input = decision.input or tool_input
+                    decision = await retry_with_correction(
+                        self.react_chain,
+                        {
+                            "input": f"""
+                                You are executing a planned step.
 
-                # Inject user_id if needed
-                if tool_name == "document_search":
-                    updated_input["user_id"] = user_id
+                                Tool: {tool_name}
 
-                # Execute tool
-                tool_result = self.tool_executor.execute_with_retry(
-                    tool_name,
-                    updated_input,
-                    retries=1
-                )
+                                Rules:
+                                - You MUST use this tool
+                                - You may ONLY adjust input
 
-                #  If tool failed → retry with corrected input
-                if not tool_result.success:
-                    retry_count += 1
+                                Input:
+                                {tool_input}
 
-                    context_memory.append(
-                        f"""
-                            Step {step_index} FAILED
-                            Tool: {tool_name}
-                            Error: {tool_result.error}
-                        """
+                                Previous Observations:
+                                {context_memory}
+
+                                Return JSON.
+                            """,
+                            "tools": self.registry.get_tool_descriptions(),
+                        },
+                        parse_agent_output,
                     )
 
-                    if retry_count > MAX_RETRY_PER_STEP:
-                        results.append({
-                            "step": step_index,
-                            "tool": tool_name,
-                            "success": False,
-                            "error": tool_result.error
-                        })
-                        break
+                    updated_input = decision.input or tool_input
 
-                    continue
+                    tool_result = self.tool_executor.execute_with_retry(
+                        tool_name,
+                        updated_input,
+                        retries=1
+                    )
 
-                #  Success
-                context_memory.append(
-                    f"""
-                        Step {step_index} SUCCESS
-                        Tool: {tool_name}
-                        Result: {tool_result.data}
-                    """
-                )
+                    if not tool_result.success:
+                        retry_count += 1
 
+                        context_memory.append(
+                            f"Tool {tool_name} FAILED: {tool_result.error}"
+                        )
+
+                        if retry_count > MAX_RETRY_PER_STEP:
+                            break  # try next tool
+
+                        continue
+
+                    # SUCCESS
+                    context_memory.append(
+                        f"Tool {tool_name} SUCCESS: {tool_result.data}"
+                    )
+
+                    results.append({
+                        "step": step_index,
+                        "tool": tool_name,
+                        "success": True,
+                        "data": tool_result.data
+                    })
+
+                    success = True
+                    break  # stop retry loop
+
+                if success:
+                    break  # stop tool fallback loop
+        
+            if not success:
                 results.append({
                     "step": step_index,
-                    "tool": tool_name,
-                    "success": True,
-                    "data": tool_result.data
+                    "tool": original_tool,
+                    "success": False,
+                    "error": "All tool attempts failed"
                 })
-
-                break  # move to next step
 
         return {
             "execution": results,
